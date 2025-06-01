@@ -1,97 +1,83 @@
-from sklearn import svm
-from sklearn.model_selection import train_test_split
+import streamlit as st
+import numpy as np
+import cv2
+import joblib
+import os
 from skimage.feature import hog
 from skimage import exposure
-import cv2
-import numpy as np
-import os
+from PIL import Image
 
-def classify_images_using_HOG_SVM(image_folder, label_map):
-    """
-    Classifies images using HOG features and an SVM classifier.
+# ---- Set page config ----
+st.set_page_config(page_title="Multilingual HOG-SVM Classifier", layout="wide")
 
-    Parameters:
-    - image_folder (str): The path to the folder containing subfolders of images for each class.
-    - label_map (dict): A dictionary that maps subfolder names to class labels.
+# ---- Hide Streamlit watermark ----
+st.markdown("""
+    <style>
+    .viewerBadge_container__1QSob {display: none;}
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    </style>
+""", unsafe_allow_html=True)
 
-    Returns:
-    - clf (svm.SVC): The trained SVM classifier.
-    - X_test (array): The feature vector for the test set.
-    - y_test (array): The actual labels for the test set.
-    - test_accuracy (float): The accuracy on the test set.
-    """
-    
-    def extract_hog_features(image):
-        """
-        Extracts HOG features from a given image.
+# ---- Load SVM models from disk ----
+@st.cache_resource
+def load_models():
+    model1_path = "model/hog_svm_model1.pkl"
+    model2_path = "model/hog_svm_model2.pkl"
+    model1 = joblib.load(model1_path)
+    model2 = joblib.load(model2_path)
+    return model1, model2
 
-        Parameters:
-        - image (numpy.ndarray): The input image to extract features from.
+# ---- HOG feature extractor ----
+def extract_hog_features(image: np.ndarray):
+    resized_img = cv2.resize(image, (64, 128))  # Consistent size
+    gray = cv2.cvtColor(resized_img, cv2.COLOR_BGR2GRAY)
+    features, _ = hog(
+        gray, pixels_per_cell=(8, 8), cells_per_block=(2, 2),
+        visualize=True, multichannel=False
+    )
+    return features
 
-        Returns:
-        - features (numpy.ndarray): The extracted HOG features.
-        """
-        # Resize image to a consistent size for feature extraction
-        resized_img = cv2.resize(image, (64, 128))  # Resize to 64x128 for consistency
-        
-        # Convert to grayscale (required for HOG feature extraction)
-        gray = cv2.cvtColor(resized_img, cv2.COLOR_BGR2GRAY)
+# ---- Streamlit App ----
+st.title("📝 Multilingual Document Classifier (HOG + SVM)")
 
-        # Compute HOG features (using 8x8 pixels per cell and 2x2 cells per block)
-        features, hog_image = hog(gray, pixels_per_cell=(8, 8), cells_per_block=(2, 2), visualize=True, multichannel=False)
+st.markdown("This tool uses pretrained HOG+SVM models to classify a **handwritten image** as English, Hindi, or Kannada.")
 
-        # Optionally, apply a contrast normalization technique to enhance features
-        hog_image_rescaled = exposure.rescale_intensity(hog_image, in_range=(0, 10))
+# ---- Sidebar model selection ----
+model_choice = st.sidebar.radio(
+    "Choose classification model:",
+    ("English vs Hindi (Model 1)", "English vs Kannada (Model 2)")
+)
 
-        return features
-    
-    def load_data(image_folder, label_map):
-        """
-        Loads images from subfolders, extracts their HOG features and labels.
+uploaded_file = st.file_uploader("Upload a handwritten document image", type=["jpg", "jpeg", "png"])
 
-        Parameters:
-        - image_folder (str): Path to the dataset folder containing subfolders of images.
-        - label_map (dict): Mapping from folder names to class labels.
+if uploaded_file is not None:
+    # Show uploaded image
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Uploaded Image", use_column_width=True)
 
-        Returns:
-        - features (numpy.ndarray): Array containing the HOG feature vectors.
-        - labels (numpy.ndarray): Array containing the corresponding labels.
-        """
-        features = []
-        labels = []
+    # Convert PIL to NumPy
+    image_np = np.array(image)
 
-        # Loop through the subfolders in the image folder
-        for folder_name in os.listdir(image_folder):
-            folder_path = os.path.join(image_folder, folder_name)
+    # Extract HOG features
+    with st.spinner("Extracting HOG features..."):
+        features = extract_hog_features(image_np)
 
-            # Only process directories (each representing a class)
-            if os.path.isdir(folder_path):
-                label = label_map[folder_name]  # Map folder name to class label
-                
-                # Loop through the images in the class folder
-                for filename in os.listdir(folder_path):
-                    image_path = os.path.join(folder_path, filename)
-                    
-                    if image_path.endswith(('.png', '.jpg', '.jpeg')):  # Process only image files
-                        image = cv2.imread(image_path)  # Read the image
-                        feature = extract_hog_features(image)  # Extract HOG features
-                        features.append(feature)  # Append feature vector
-                        labels.append(label)  # Append corresponding label
-        
-        return np.array(features), np.array(labels)
+    # Load appropriate model
+    model1, model2 = load_models()
+    if "Model 1" in model_choice:
+        model = model1
+        label_map = {0: "English", 1: "Hindi"}
+    else:
+        model = model2
+        label_map = {0: "English", 1: "Kannada"}
 
-    # Load the dataset and extract features and labels
-    X, y = load_data(image_folder, label_map)
+    # Predict
+    with st.spinner("Classifying..."):
+        prediction = model.predict([features])[0]
+        predicted_label = label_map[prediction]
 
-    # Split the data into training and test sets
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    st.success(f"✅ Predicted Language: **{predicted_label}**")
 
-    # Train the SVM classifier (RBF kernel)
-    clf = svm.SVC(kernel='rbf', C=1, gamma='scale')  # SVM with RBF kernel
-    clf.fit(X_train, y_train)  # Fit the classifier on the training data
-
-    
-  
-
-    return clf, X_test, y_test
+# ---- Optional footer ----
 
