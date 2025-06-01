@@ -10,14 +10,7 @@ from PIL import Image
 # ---- Set page config ----
 st.set_page_config(page_title="Multilingual HOG-SVM Classifier", layout="wide")
 
-# ---- Hide Streamlit watermark ----
-st.markdown("""
-    <style>
-    .viewerBadge_container__1QSob {display: none;}
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    </style>
-""", unsafe_allow_html=True)
+
 
 # ---- Load SVM models from disk ----
 @st.cache_resource
